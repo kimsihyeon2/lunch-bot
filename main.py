@@ -42,6 +42,14 @@ class NaverCafeApiCrawler:
             'Accept-Language': 'ko-KR,ko;q=0.9,en-US;q=0.8,en;q=0.7',
         })
         
+        # 매일 올라오는 예상 식당 목록 (제목에 포함되는 키워드)
+        self.expected_restaurants = [
+            {"name": "송원식당", "keyword": "송원식당"},
+            {"name": "해담가 (판교아이스퀘어)", "keyword": "해담가"},
+            {"name": "정겨운맛풍경 (경기기업성장센터)", "keyword": "정겨운맛풍경"},
+            {"name": "런치포유 (글로벌비즈센터)", "keyword": "런치포유"},
+        ]
+        
         self.target_keywords = self._generate_date_keywords()
 
     def _get_kst_now(self):
@@ -145,19 +153,26 @@ class NaverCafeApiCrawler:
         text = self.clean_html(text)
         return '\n'.join([line.strip() for line in text.split('\n') if line.strip()])
 
-    def send_to_slack(self, menus):
+    def send_to_slack(self, menus, missing_restaurants=None):
         """슬랙으로 메뉴 발송"""
         if not self.slack_webhook_url:
             logger.warning("⚠️ 슬랙 웹훅 URL이 없어 발송을 건너뜁니다.")
             return False
         
+        if missing_restaurants is None:
+            missing_restaurants = []
+        
         # 헤더: KST 시간 표시
         today_str = self._get_kst_now().strftime('%Y년 %m월 %d일 (%a)')
+        
+        # 업데이트된 식당 수 계산
+        updated_count = len(menus)
+        total_count = updated_count + len(missing_restaurants)
         
         blocks = [
             {
                 "type": "header",
-                "text": {"type": "plain_text", "text": f"🍱 오늘의 점심 메뉴 ({len(menus)}곳)", "emoji": True}
+                "text": {"type": "plain_text", "text": f"🍱 오늘의 점심 메뉴 ({updated_count}/{total_count}곳 업데이트)", "emoji": True}
             },
             {
                 "type": "context",
@@ -203,6 +218,21 @@ class NaverCafeApiCrawler:
             
             blocks.append({"type": "divider"})
         
+        # 미업데이트 식당 표시
+        if missing_restaurants:
+            missing_text = "*⏳ 아직 업데이트되지 않은 식당:*\n"
+            for name in missing_restaurants:
+                missing_text += f"• {name}\n"
+            
+            blocks.append({
+                "type": "section",
+                "text": {
+                    "type": "mrkdwn",
+                    "text": missing_text.strip()
+                }
+            })
+            blocks.append({"type": "divider"})
+        
         payload = {"blocks": blocks, "text": f"🍱 오늘 점심 메뉴 {len(menus)}개 도착"}
         
         try:
@@ -229,6 +259,8 @@ class NaverCafeApiCrawler:
         logger.info(f"📋 총 {len(articles)}개 게시글 발견")
         
         today_menus = []
+        found_keywords = set()  # 발견된 식당 키워드 추적
+        
         for article in articles:
             subject = self.clean_html(article.get('subject', ''))
             if not any(k in subject for k in self.target_keywords):
@@ -236,6 +268,11 @@ class NaverCafeApiCrawler:
                 
             logger.info(f"✅ 메뉴 발견: {subject}")
             article_id = article.get('articleId')
+            
+            # 어떤 식당인지 추적
+            for restaurant in self.expected_restaurants:
+                if restaurant['keyword'] in subject:
+                    found_keywords.add(restaurant['keyword'])
             
             detail = self.fetch_article_detail(article_id)
             if not detail:
@@ -250,22 +287,37 @@ class NaverCafeApiCrawler:
                 'text_menu': self.extract_text_menu(content)
             }
             today_menus.append(menu_info)
-
+        
+        # 미업데이트 식당 찾기
+        missing_restaurants = []
+        for restaurant in self.expected_restaurants:
+            if restaurant['keyword'] not in found_keywords:
+                missing_restaurants.append(restaurant['name'])
+                logger.info(f"⏳ 미업데이트: {restaurant['name']}")
+        
         if today_menus:
             logger.info(f"🎉 총 {len(today_menus)}개 메뉴 발견!")
-            self.send_to_slack(today_menus)
+            self.send_to_slack(today_menus, missing_restaurants)
         else:
             logger.info("📭 오늘 메뉴 없음")
-            # 메뉴가 없어도 슬랙에 알림 (옵션)
+            # 메뉴가 없어도 슬랙에 알림
             if self.slack_webhook_url:
-                self._send_no_menu_notification()
+                self._send_no_menu_notification(missing_restaurants)
 
-    def _send_no_menu_notification(self):
+    def _send_no_menu_notification(self, missing_restaurants=None):
         """메뉴가 없을 때 슬랙 알림"""
+        if missing_restaurants is None:
+            missing_restaurants = []
+        
         today_str = self._get_kst_now().strftime('%Y년 %m월 %d일 (%a)')
-        payload = {
-            "text": f"📭 {today_str} - 아직 오늘의 점심 메뉴가 올라오지 않았습니다."
-        }
+        
+        message = f"📭 {today_str} - 아직 오늘의 점심 메뉴가 올라오지 않았습니다."
+        if missing_restaurants:
+            message += "\n\n*⏳ 대기 중인 식당:*\n"
+            for name in missing_restaurants:
+                message += f"• {name}\n"
+        
+        payload = {"text": message}
         try:
             requests.post(self.slack_webhook_url, json=payload, timeout=10)
         except:
