@@ -1,128 +1,71 @@
-import os
 import requests
 from bs4 import BeautifulSoup
-from datetime import datetime
+from datetime import datetime, timedelta, timezone
 
-# 1. 설정값
-SLACK_WEBHOOK_URL = os.environ.get("SLACK_WEBHOOK_URL")
-
-# 모바일 페이지 주소 (봇이 읽기 훨씬 쉽습니다)
-# 판교 직장인 탐구생활 (ID: 30487307) / 메뉴판 (ID: 26)
-MOBILE_URL = "https://m.cafe.naver.com/SectionArticleList.nhn?cafeId=30487307&menuId=26"
-
-# 찾고 싶은 식당 이름들
+# --- 설정 ---
+# 판교 직장인 탐구생활 (PC 버전 글목록 원본 주소)
+TARGET_URL = "https://cafe.naver.com/ArticleList.nhn?search.clubid=30487307&search.menuid=26&search.boardtype=L"
 RESTAURANTS = ["송원식당", "해담가", "정겨운맛풍경", "런치포유"]
 
-def get_menu_message():
-    now = datetime.now()
-    # 날짜 필터 (예: "12월19일") - 공백 제거하고 비교함
+def test_crawling():
+    # 한국 시간 설정
+    kst = timezone(timedelta(hours=9))
+    now = datetime.now(kst)
+    
+    # 봇이 찾을 날짜 문자열 (공백 제거 버전)
     date_filter = f"{now.month}월{now.day}일"
-    display_date = f"{now.month}월 {now.day}일"
+    print(f"--- 🕵️‍♀️ 테스트 시작 ---")
+    print(f"기준 날짜: {date_filter}")
+    print(f"접속 주소: {TARGET_URL}\n")
 
-    # 봇 위장 (차단 방지)
+    # 봇 차단 방지 헤더
     headers = {
-        "User-Agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/14.0 Mobile/15E148 Safari/604.1"
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/91.0.4472.124 Safari/537.36"
     }
 
-    print(f"🔍 [모바일 모드] 크롤링 시작: {display_date} 메뉴 찾는 중...")
-    
     try:
-        res = requests.get(MOBILE_URL, headers=headers)
-        # 한글 깨짐 방지
-        res.encoding = 'utf-8' 
+        res = requests.get(TARGET_URL, headers=headers)
+        res.encoding = 'cp949' # 네이버 카페 PC버전은 euc-kr/cp949 인코딩 사용
         soup = BeautifulSoup(res.text, "html.parser")
     except Exception as e:
-        return {"text": f"❌ 접속 오류: {str(e)}", "blocks": []}
+        print(f"❌ 사이트 접속 자체를 실패했습니다: {e}")
+        return
 
-    # 모바일 카페 글 목록 가져오기
-    # (li 태그 안에 글들이 들어있음)
-    articles = soup.select("li")
-    
-    found_menus = {}
+    # 게시글 행(tr) 가져오기
+    articles = soup.select("div.article-board table tbody tr")
+    print(f"읽어온 게시글 수: {len(articles)}개\n")
 
-    for article in articles:
-        # 제목 찾기 (모바일은 strong.tit 또는 div.tit 클래스를 씀)
-        title_tag = article.select_one("strong.tit") or article.select_one("div.tit") or article.select_one("h3")
-        
-        if not title_tag:
+    found_count = 0
+
+    print("--- 🔍 최신 글 5개 제목 확인 (봇이 보고 있는 것) ---")
+    for i, article in enumerate(articles):
+        # 제목 태그
+        title_tag = article.select_one("a.article")
+        if not title_tag: 
             continue
-
-        title = title_tag.text.strip()
+            
+        raw_title = title_tag.text.strip()
+        # 제목에서 공백 제거 (비교용)
+        clean_title = raw_title.replace(" ", "").replace("\t", "").replace("\n", "")
         
-        # 링크 찾기
-        link_tag = article.select_one("a")
-        link = "https://m.cafe.naver.com" + link_tag["href"] if link_tag else MOBILE_URL
+        # 최신 5개만 로그에 출력해서 확인
+        if i < 5:
+            print(f"[{i+1}] {raw_title}")
 
-        # 제목에서 공백을 싹 제거하고 날짜 비교 (12월 19일 vs 12월19일 해결)
-        title_clean = title.replace(" ", "").replace("\t", "").replace("\n", "")
-        
-        # 디버깅용 출력 (Actions 로그에서 확인 가능)
-        # print(f"읽은 글: {title_clean}") 
-
-        # 1. 오늘 날짜 확인
-        if date_filter in title_clean:
-            # 2. 식당 이름 확인
+        # 날짜 매칭 확인
+        if date_filter in clean_title:
             for rest_name in RESTAURANTS:
-                if rest_name in found_menus:
-                    continue
-                
-                if rest_name in title:
-                    print(f"✅ 발견! {rest_name} -> {title}")
-                    
-                    # 본문 긁어오기
-                    try:
-                        content_res = requests.get(link, headers=headers)
-                        content_soup = BeautifulSoup(content_res.text, "html.parser")
-                        
-                        # 본문 내용 (모바일 뷰 기준)
-                        content_div = content_soup.select_one("#postContent") or content_soup.select_one("div.se-main-container")
-                        
-                        if content_div:
-                            menu_text = content_div.get_text("\n").strip()
-                            if len(menu_text) > 200:
-                                menu_text = menu_text[:200] + "...\n(더보기 클릭)"
-                        else:
-                            menu_text = "메뉴 내용을 읽을 수 없습니다. (사진 위주 게시글일 수 있음)"
-                            
-                        found_menus[rest_name] = {
-                            "text": menu_text,
-                            "link": link
-                        }
-                    except:
-                        found_menus[rest_name] = {"text": "본문 로딩 실패", "link": link}
-
-    # --- 슬랙 메시지 만들기 ---
-    blocks = [
-        {"type": "header", "text": {"type": "plain_text", "text": f"🍚 {display_date} 판교 점심 메뉴"}},
-        {"type": "divider"}
-    ]
-
-    if not found_menus:
-        blocks.append({
-            "type": "section",
-            "text": {"type": "mrkdwn", "text": "😭 *오늘 메뉴를 못 찾았어요!* \n1. 아직 게시글이 안 올라왔거나\n2. 날짜 형식이 다를 수 있습니다.\n(봇은 '12월19일' 같은 제목을 찾습니다)"}
-        })
-        blocks.append({
-             "type": "section",
-             "text": {"type": "mrkdwn", "text": f"👉 <{MOBILE_URL}|게시판 직접 확인하기>"}
-        })
+                if rest_name in raw_title:
+                    print(f"   🎉 [성공] '{rest_name}' 메뉴 발견함!")
+                    found_count += 1
+    
+    print("\n------------------------------------------------")
+    if found_count > 0:
+        print(f"✅ 결과: 총 {found_count}개의 식당 메뉴를 찾았습니다! (크롤링 정상)")
+        print("이제 슬랙 연결 코드로 바꿔도 됩니다.")
     else:
-        for name in RESTAURANTS:
-            if name in found_menus:
-                info = found_menus[name]
-                blocks.append({
-                    "type": "section",
-                    "text": {"type": "mrkdwn", "text": f"*{name}*\n{info['text']}"},
-                    "accessory": {
-                        "type": "button",
-                        "text": {"type": "plain_text", "text": "사진 보기"},
-                        "url": info['link']
-                    }
-                })
-                blocks.append({"type": "divider"})
-
-    return {"text": "점심 메뉴 도착", "blocks": blocks}
+        print(f"❌ 결과: 오늘({date_filter}) 날짜의 메뉴를 하나도 못 찾았습니다.")
+        print("이유: 아직 글이 안 올라왔거나, 날짜 형식이 다를 수 있습니다.")
 
 if __name__ == "__main__":
-    payload = get_menu_message()
-    requests.post(SLACK_WEBHOOK_URL, json=payload)
+    test_crawling()
