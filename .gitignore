@@ -1,0 +1,17 @@
+# 로컬 테스트 파일들
+menu_images/
+output.log
+output.txt
+api_response.json
+results.json
+show_results.py
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.env
+
+# IDE
+.vscode/
+.idea/
