@@ -1,0 +1,29 @@
+name: Lunch Notification
+
+on:
+  schedule:
+    # 한국 시간 11:20 (UTC 02:20)에 자동 실행
+    - cron: '20 2 * * *'
+  # 수동으로 실행 버튼도 만들어두기
+  workflow_dispatch:
+
+jobs:
+  send-lunch-menu:
+    runs-on: ubuntu-latest
+    steps:
+      - name: 코드 가져오기
+        uses: actions/checkout@v3
+
+      - name: 파이썬 설치
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.9'
+
+      - name: 라이브러리 설치
+        run: |
+          pip install -r requirements.txt
+
+      - name: 봇 실행
+        env:
+          SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python main.py
