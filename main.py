@@ -170,8 +170,9 @@ class NaverCafeApiCrawler:
             # 텍스트 메뉴 미리보기 (최대 300자)
             text_preview = menu['text_menu'][:300] + ("..." if len(menu['text_menu']) > 300 else "")
             if not text_preview:
-                text_preview = "(이미지 참고)"
+                text_preview = "(아래 이미지 참고)"
 
+            # 식당 제목 섹션
             section = {
                 "type": "section",
                 "text": {
@@ -179,16 +180,27 @@ class NaverCafeApiCrawler:
                     "text": f"*🏪 <{menu['link']}|{menu['title']}>*\n\n{text_preview}"
                 }
             }
-            
-            # 슬랙 썸네일 추가 (네이버 차단 대비: 일단 시도)
-            if menu['images']:
-                section["accessory"] = {
-                    "type": "image",
-                    "image_url": menu['images'][0],
-                    "alt_text": "점심 메뉴 이미지"
-                }
-            
             blocks.append(section)
+            
+            # 모든 이미지를 개별 블록으로 추가 (최대 5개, 슬랙 제한 고려)
+            if menu['images']:
+                for i, img_url in enumerate(menu['images'][:5]):
+                    blocks.append({
+                        "type": "image",
+                        "image_url": img_url,
+                        "alt_text": f"{menu['title']} 메뉴 이미지 {i+1}"
+                    })
+                
+                # 5개 이상이면 더 있다고 안내
+                if len(menu['images']) > 5:
+                    blocks.append({
+                        "type": "context",
+                        "elements": [{
+                            "type": "mrkdwn",
+                            "text": f"📸 +{len(menu['images'])-5}개 이미지 더 있음 → <{menu['link']}|게시글에서 보기>"
+                        }]
+                    })
+            
             blocks.append({"type": "divider"})
         
         payload = {"blocks": blocks, "text": f"🍱 오늘 점심 메뉴 {len(menus)}개 도착"}
