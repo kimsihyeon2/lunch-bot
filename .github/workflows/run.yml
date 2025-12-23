@@ -2,9 +2,14 @@ name: Lunch Notification
 
 on:
   schedule:
-    # 한국 시간 11:10 AM (UTC 02:10)에 평일(월~금)만 자동 실행
+    # -------------------------------------------------------
+    # ⚠️ 중요: GitHub는 UTC 시간을 씁니다 (한국시간 - 9시간)
+    # 한국 11:10 = UTC 02:10
+    # 분(10) 시(2) 일 월 요일(1-5=월~금)
+    # -------------------------------------------------------
     - cron: '10 2 * * 1-5'
-  # 수동으로 실행 버튼도 만들어두기
+
+  # 수동 실행 버튼 (테스트용)
   workflow_dispatch:
 
 jobs:
@@ -19,9 +24,10 @@ jobs:
         with:
           python-version: '3.9'
 
+      # 수정됨: requirements.txt 파일 없이 바로 설치 (에러 방지용)
       - name: 라이브러리 설치
         run: |
-          pip install -r requirements.txt
+          pip install requests
 
       - name: 봇 실행
         env:
